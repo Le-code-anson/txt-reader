@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TXT 阅读器</title>
+<style>
+  :root {
+    --bg: #1E1E1E;
+    --fg: #D4D4D4;
+    --sel: #264F78;
+    --border: #444;
+    --btn-bg: #2d2d2d;
+    --btn-hover: #3d3d3d;
+    --tab-active: #1E1E1E;
+    --tab-inactive: #2a2a2a;
+    --toolbar-bg: #252525;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 工具栏 */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--toolbar-bg);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    min-height: 38px;
+  }
+  .toolbar button {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--btn-bg);
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .toolbar button:hover { background: var(--btn-hover); }
+  .tb-theme.active { border-color: #4A90D9 !important; background: #1a3a5c !important; color: #D6E8FB !important; }
+  .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 3px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid #999; vertical-align: middle; margin-right: 3px; position: relative; top: -1px; }
+
+  /* 主区域 */
+  .main-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* 窗格 */
+  .pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 200px;
+    min-height: 80px;
+    position: relative;
+  }
+
+  /* 标签栏 */
+  .pane-tabs {
+    display: flex;
+    align-items: center;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    overflow-x: auto;
+    min-height: 30px;
+  }
+  .pane-tabs::-webkit-scrollbar { height: 2px; }
+  .pane-tab {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 10px;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+    background: var(--tab-inactive);
+    color: var(--fg);
+    user-select: none;
+    max-width: 160px;
+    flex-shrink: 0;
+  }
+  .pane-tab.active { background: var(--tab-active); border-bottom: 2px solid #4A90D9; }
+  .pane-tab .tab-name { overflow: hidden; text-overflow: ellipsis; }
+  .pane-tab.modified .tab-name::before { content: '● '; color: #4A90D9; font-size: 9px; }
+  .pane-tab .tab-close { font-size: 14px; margin-left: 2px; padding: 0 3px; border-radius: 2px; color: #999; cursor: pointer; flex-shrink: 0; }
+  .pane-tab .tab-close:hover { background: #d9534f; color: #fff; }
+
+  /* 编辑区 */
+  .pane-editor {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .pane-editor textarea {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 28px 44px;
+    font-size: 18px;
+    line-height: 1.9;
+    border: none;
+    outline: none;
+    resize: none;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Microsoft YaHei", "PingFang SC", serif;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    display: none;
+  }
+  .pane-editor textarea.active { display: block; }
+  .pane-editor textarea::selection { background: var(--sel); }
+
+  /* 空状态提示 */
+  .pane-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    color: #666;
+    pointer-events: auto;
+    z-index: 0;
+  }
+  .hint-link {
+    color: #4A90D9;
+    cursor: pointer;
+    text-decoration: underline;
+    pointer-events: auto;
+  }
+  .hint-link:hover { color: #6DB3F8; }
+
+  /* 分割条 */
+  .splitter {
+    flex-shrink: 0;
+    background: var(--border);
+    z-index: 10;
+  }
+  .splitter.h { width: 5px; cursor: col-resize; }
+  .splitter.v { height: 5px; cursor: row-resize; }
+  .splitter:hover { background: #4A90D9; }
+
+  /* 右键菜单 */
+  .ctx-menu {
+    position: fixed;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 0;
+    z-index: 9999;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+    min-width: 150px;
+    font-size: 13px;
+  }
+  .ctx-menu div {
+    padding: 6px 16px;
+    cursor: pointer;
+    color: var(--fg);
+  }
+  .ctx-menu div:hover { background: var(--btn-hover); }
+
+  /* 搜索栏 */
+  .search-bar {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--toolbar-bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .search-bar.visible { display: flex; }
+  .search-bar input {
+    width: 180px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 13px;
+    outline: none;
+  }
+  .search-bar input:focus { border-color: #4A90D9; }
+  .search-bar .sr-count { font-size: 12px; color: #999; min-width: 50px; }
+  .search-bar button {
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--btn-bg);
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .search-bar button:hover { background: var(--btn-hover); }
+  .search-bar button.active { border-color: #4A90D9; background: #1a3a5c; color: #D6E8FB; }
+  .search-bar .sr-close {
+    margin-left: auto;
+    font-size: 16px;
+    cursor: pointer;
+    color: #999;
+    padding: 0 4px;
+  }
+  .search-bar .sr-close:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<div class="toolbar" id="toolbar">
+  <button onclick="cmdNew()" title="Ctrl+T 新建标签">新建</button>
+  <button onclick="cmdSave()" title="Ctrl+S 保存">保存</button>
+  <button onclick="cmdSaveAs()" title="Ctrl+Shift+S">另存为</button>
+  <span class="tb-sep"></span>
+  <button class="tb-theme" data-theme="light"><span class="dot" style="background:#FFF;border-color:#aaa"></span>白底</button>
+  <button class="tb-theme" data-theme="warm"><span class="dot" style="background:#F5E6C8"></span>暖黄</button>
+  <button class="tb-theme" data-theme="mint"><span class="dot" style="background:#C7EDCC"></span>豆沙绿</button>
+  <button class="tb-theme active" data-theme="dark"><span class="dot" style="background:#1E1E1E"></span>黑底</button>
+  <button class="tb-theme" data-theme="amber"><span class="dot" style="background:#1A1410"></span>琥珀</button>
+  <span class="tb-sep"></span>
+  <button onclick="changeFontSize(-1)">A-</button>
+  <button onclick="changeFontSize(1)">A+</button>
+  <span class="tb-sep"></span>
+  <button onclick="splitPane('h')">▯▯ 左右分屏</button>
+  <button onclick="splitPane('v')">▯▯ 上下分屏</button>
+</div>
+
+<div class="main-area" id="mainArea">
+  <div class="pane" id="pane-0">
+    <div class="pane-tabs"></div>
+    <div class="pane-editor">
+      <div class="pane-hint">拖 txt 文件 或 <span class="hint-link" onclick="cmdOpen()">打开</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="ctx-menu" id="ctxMenu" style="display:none"></div>
+
+<!-- 搜索栏 -->
+<div class="search-bar" id="searchBar">
+  <input type="text" id="searchInput" placeholder="搜索…" />
+  <span class="sr-count" id="searchCount"></span>
+  <button id="searchPrevBtn" title="上一个 (Shift+Enter)">◀</button>
+  <button id="searchNextBtn" title="下一个 (Enter)">▶</button>
+  <button id="searchCaseBtn" title="区分大小写">Aa</button>
+  <span class="sr-close" title="关闭 (Esc)" onclick="toggleSearch(false)">&times;</span>
+</div>
+
+<script>
+// ===================== 配色定义 =====================
+const themes = {
+  light: { bg:'#FFFFFF', fg:'#1A1A1A', sel:'#ADD6FF', border:'#ddd', btnBg:'#f0f0f0', btnHover:'#e0e0e0', tabActive:'#fff', tabInactive:'#e8e8e8', toolbarBg:'#fafafa', ctxShadow:'rgba(0,0,0,.15)' },
+  warm:  { bg:'#F5E6C8', fg:'#3D2B1F', sel:'#D4B896', border:'#c8b898', btnBg:'#EDD9B8', btnHover:'#dcc8a0', tabActive:'#F5E6C8', tabInactive:'#ddd0b0', toolbarBg:'#EDD9B8', ctxShadow:'rgba(0,0,0,.12)' },
+  mint:  { bg:'#C7EDCC', fg:'#1A3A1A', sel:'#A8D8AE', border:'#9cc8a2', btnBg:'#BDE5C2', btnHover:'#a8d8ae', tabActive:'#C7EDCC', tabInactive:'#b0d8b6', toolbarBg:'#BDE5C2', ctxShadow:'rgba(0,0,0,.12)' },
+  dark:  { bg:'#1E1E1E', fg:'#D4D4D4', sel:'#264F78', border:'#444', btnBg:'#2d2d2d', btnHover:'#3d3d3d', tabActive:'#1E1E1E', tabInactive:'#2a2a2a', toolbarBg:'#252525', ctxShadow:'rgba(0,0,0,.4)' },
+  amber: { bg:'#1A1410', fg:'#D4A554', sel:'#3E2E1A', border:'#3a3028', btnBg:'#241E16', btnHover:'#342a1e', tabActive:'#1A1410', tabInactive:'#241C16', toolbarBg:'#1E1814', ctxShadow:'rgba(0,0,0,.5)' },
+};
+let currentTheme = 'dark';
+let fontSize = 18;
+
+// ===================== 数据 =====================
+let fileTabs = [];        // { id, name, handle, modified, textarea, paneId }
+let tabIdSeq = 0;
+let activeFileId = null;
+
+let panes = [];           // { id, el, tabsEl, editorEl, tabs: [id], activeFileId }
+let paneIdSeq = 1;
+
+// ===================== 初始化 pane 0 =====================
+const mainArea = document.getElementById('mainArea');
+const pane0 = document.getElementById('pane-0');
+panes.push({
+  id: 0,
+  el: pane0,
+  tabsEl: pane0.querySelector('.pane-tabs'),
+  editorEl: pane0.querySelector('.pane-editor'),
+  tabs: [],
+  activeFileId: null,
+});
+
+// pane-0 拖放事件（新窗格在 createPane 中绑定，默认窗格在这里绑定）
+pane0.addEventListener('dragover', e => {
+  if ([...e.dataTransfer.items].some(i => i.kind === 'file' || i.type === 'text/plain')) {
+    e.preventDefault();
+  }
+});
+pane0.addEventListener('drop', e => {
+  e.preventDefault();
+  const rawId = e.dataTransfer.getData('text/plain');
+  if (rawId && !isNaN(parseInt(rawId))) {
+    switchFileToPane(parseInt(rawId), panes[0]);
+  } else {
+    handleFileDrop(e, panes[0]);
+  }
+});
+
+// ===================== 应用配色 =====================
+function applyTheme(name) {
+  currentTheme = name;
+  const t = themes[name];
+  const r = document.documentElement.style;
+  r.setProperty('--bg', t.bg);
+  r.setProperty('--fg', t.fg);
+  r.setProperty('--sel', t.sel);
+  r.setProperty('--border', t.border);
+  r.setProperty('--btn-bg', t.btnBg);
+  r.setProperty('--btn-hover', t.btnHover);
+  r.setProperty('--tab-active', t.tabActive);
+  r.setProperty('--tab-inactive', t.tabInactive);
+  r.setProperty('--toolbar-bg', t.toolbarBg);
+
+  // 每个 textarea 强制写死背景色（绕过浏览器 textarea 默认样式）
+  document.querySelectorAll('.pane-editor textarea').forEach(ta => {
+    ta.style.background = t.bg;
+    ta.style.color = t.fg;
+    ta.style.caretColor = t.fg;
+  });
+
+  document.querySelectorAll('.tb-theme').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector(`.tb-theme[data-theme="${name}"]`);
+  if (btn) btn.classList.add('active');
+}
+
+document.querySelectorAll('.tb-theme').forEach(btn => {
+  btn.addEventListener('click', () => applyTheme(btn.dataset.theme));
+});
+
+function changeFontSize(delta) {
+  fontSize = Math.max(12, Math.min(36, fontSize + delta));
+  document.querySelectorAll('.pane-editor textarea').forEach(ta => ta.style.fontSize = fontSize + 'px');
+}
+
+// ===================== 窗格管理 =====================
+function createPane() {
+  const id = paneIdSeq++;
+  const el = document.createElement('div');
+  el.className = 'pane';
+  el.id = 'pane-' + id;
+
+  const tabsEl = document.createElement('div');
+  tabsEl.className = 'pane-tabs';
+  el.appendChild(tabsEl);
+
+  const editorEl = document.createElement('div');
+  editorEl.className = 'pane-editor';
+  const hint = document.createElement('div');
+  hint.className = 'pane-hint';
+  hint.innerHTML = '拖 txt 文件 或 <span class="hint-link" onclick="cmdOpen()">打开</span>';
+  editorEl.appendChild(hint);
+  el.appendChild(editorEl);
+
+  mainArea.appendChild(el);
+
+  const pane = { id, el, tabsEl, editorEl, tabs: [], activeFileId: null };
+
+  // 拖放事件
+  el.addEventListener('dragover', e => {
+    if ([...e.dataTransfer.items].some(i => i.kind === 'file' || i.type === 'text/plain')) {
+      e.preventDefault();
+    }
+  });
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    const rawId = e.dataTransfer.getData('text/plain');
+    if (rawId && !isNaN(parseInt(rawId))) {
+      switchFileToPane(parseInt(rawId), pane);
+    } else {
+      handleFileDrop(e, pane);
+    }
+  });
+
+  panes.push(pane);
+  refreshAll();
+  return pane;
+}
+
+function splitPane(direction) {
+  const af = getActiveFile();
+  const oldPane = af ? getPaneById(af.paneId) : panes[0];
+  if (!oldPane) return;
+
+  const newPane = createPane();
+  const splitter = document.createElement('div');
+  splitter.className = 'splitter ' + direction;
+
+  if (direction === 'h') {
+    oldPane.el.style.flex = '0 0 50%';
+    newPane.el.style.flex = '1';
+    oldPane.el.after(splitter);
+    splitter.after(newPane.el);
+    let dragging = false;
+    splitter.addEventListener('mousedown', e => {
+      e.preventDefault(); dragging = true;
+      const onMove = ev => {
+        const rect = mainArea.getBoundingClientRect();
+        oldPane.el.style.flex = `0 0 ${Math.max(15, Math.min(85, ((ev.clientX - rect.left) / rect.width) * 100))}%`;
+      };
+      const onUp = () => { dragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  } else {
+    mainArea.style.flexDirection = 'column';
+    oldPane.el.style.flex = '0 0 50%';
+    newPane.el.style.flex = '1';
+    oldPane.el.after(splitter);
+    splitter.after(newPane.el);
+    let dragging = false;
+    splitter.addEventListener('mousedown', e => {
+      e.preventDefault(); dragging = true;
+      const onMove = ev => {
+        const rect = mainArea.getBoundingClientRect();
+        oldPane.el.style.flex = `0 0 ${Math.max(10, Math.min(90, ((ev.clientY - rect.top) / rect.height) * 100))}%`;
+      };
+      const onUp = () => { dragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  refreshAll();
+}
+
+function closePane() {
+  if (panes.length <= 1) return;
+  const af = getActiveFile();
+  const pid = af ? af.paneId : null;
+  const pane = pid ? getPaneById(pid) : panes[panes.length - 1];
+  if (!pane) return;
+
+  const target = panes.find(p => p.id !== pane.id);
+  if (target) {
+    [...pane.tabs].forEach(fid => switchFileToPane(fid, target));
+  }
+
+  const prev = pane.el.previousElementSibling;
+  const next = pane.el.nextElementSibling;
+  if (prev && prev.classList.contains('splitter')) prev.remove();
+  if (next && next.classList.contains('splitter')) next.remove();
+  pane.el.remove();
+  panes = panes.filter(p => p.id !== pane.id);
+
+  if (panes.length <= 1) {
+    mainArea.style.flexDirection = '';
+    panes.forEach(p => p.el.style.flex = '1');
+  }
+
+  refreshAll();
+}
+
+// ===================== 文件 Tab 管理 =====================
+function createFileTab(name, handle, paneId) {
+  const id = ++tabIdSeq;
+  const tab = { id, name, handle, modified: false, textarea: null, paneId };
+  fileTabs.push(tab);
+  return tab;
+}
+
+function addTabToPane(tab, pane) {
+  pane.tabs.push(tab.id);
+  tab.paneId = pane.id;
+
+  // 创建 textarea
+  const ta = document.createElement('textarea');
+  ta.spellcheck = false;
+  ta.style.fontSize = fontSize + 'px';
+  ta.style.background = themes[currentTheme].bg;
+  ta.style.color = themes[currentTheme].fg;
+  ta.style.caretColor = themes[currentTheme].fg;
+  ta.addEventListener('input', () => { tab.modified = true; refreshAll(); });
+  pane.editorEl.appendChild(ta);
+  tab.textarea = ta;
+
+  // 变为活跃
+  activateFile(tab.id);
+}
+
+function activateFile(fileId) {
+  const tab = fileTabs.find(t => t.id === fileId);
+  if (!tab) return;
+
+  // 只隐藏同窗格内的 textarea，其他窗格不受影响
+  const pane = getPaneById(tab.paneId);
+  if (pane) {
+    pane.editorEl.querySelectorAll('textarea').forEach(ta => ta.classList.remove('active'));
+    pane.activeFileId = fileId;
+  }
+
+  // 显示目标 textarea
+  if (tab.textarea) {
+    tab.textarea.classList.add('active');
+    tab.textarea.focus();
+  }
+
+  activeFileId = fileId;
+  refreshAll();
+}
+
+function switchFileToPane(fileId, targetPane) {
+  const tab = fileTabs.find(t => t.id === fileId);
+  if (!tab) return;
+
+  // 从旧 pane 移除
+  const oldPane = getPaneById(tab.paneId);
+  if (oldPane) {
+    oldPane.tabs = oldPane.tabs.filter(id => id !== fileId);
+    if (oldPane.activeFileId === fileId) {
+      oldPane.activeFileId = oldPane.tabs[0] || null;
+    }
+  }
+
+  // 加入新 pane
+  if (!targetPane.tabs.includes(fileId)) targetPane.tabs.push(fileId);
+  tab.paneId = targetPane.id;
+
+  // 移动 textarea DOM
+  if (tab.textarea && tab.textarea.parentNode !== targetPane.editorEl) {
+    targetPane.editorEl.appendChild(tab.textarea);
+  }
+
+  activateFile(fileId);
+}
+
+function closeFileTab(fileId) {
+  const tab = fileTabs.find(t => t.id === fileId);
+  if (!tab) return;
+  if (tab.modified && !confirm(`「${tab.name}」有未保存的修改，确定关闭？`)) return;
+
+  const pane = getPaneById(tab.paneId);
+  if (pane) {
+    pane.tabs = pane.tabs.filter(id => id !== fileId);
+    if (pane.activeFileId === fileId) {
+      pane.activeFileId = pane.tabs[0] || null;
+    }
+  }
+
+  if (tab.textarea) tab.textarea.remove();
+  fileTabs = fileTabs.filter(t => t.id !== fileId);
+
+  if (activeFileId === fileId) {
+    // 尝试切到同 pane 的下一个 tab
+    if (pane && pane.activeFileId) {
+      activeFileId = pane.activeFileId;
+      const nextTab = fileTabs.find(t => t.id === activeFileId);
+      if (nextTab && nextTab.textarea) nextTab.textarea.classList.add('active');
+    } else {
+      // 找任意文件
+      activeFileId = fileTabs[0]?.id || null;
+      if (activeFileId) {
+        const nt = fileTabs.find(t => t.id === activeFileId);
+        if (nt && nt.textarea) {
+          nt.textarea.classList.add('active');
+          const pp = getPaneById(nt.paneId);
+          if (pp) pp.activeFileId = activeFileId;
+        }
+      }
+    }
+  }
+
+  refreshAll();
+}
+
+function getActiveFile() { return fileTabs.find(t => t.id === activeFileId) || null; }
+function getPaneById(id) { return panes.find(p => p.id === id) || null; }
+
+// ===================== 渲染（只用增量，不 innerHTML 整个刷新） =====================
+// 核心原则：只改 class 和文本，不重建 DOM，避免事件丢失和闪烁
+function refreshAll() {
+  panes.forEach(pane => {
+    const tabsEl = pane.tabsEl;
+    const existingTabs = [...tabsEl.querySelectorAll('.pane-tab')];
+    const existingMap = {};
+    existingTabs.forEach(el => { existingMap[el.dataset.fileId] = el; });
+
+    const frag = document.createDocumentFragment();
+    pane.tabs.forEach(fileId => {
+      const tab = fileTabs.find(t => t.id === fileId);
+      if (!tab) return;
+
+      let el = existingMap[fileId];
+      if (el) {
+        // 更新现有元素
+        el.className = 'pane-tab' +
+          (fileId === pane.activeFileId ? ' active' : '') +
+          (tab.modified ? ' modified' : '');
+        const nameSpan = el.querySelector('.tab-name');
+        if (nameSpan) nameSpan.textContent = tab.name;
+        delete existingMap[fileId];
+      } else {
+        // 创建新元素
+        el = document.createElement('div');
+        el.className = 'pane-tab' +
+          (fileId === pane.activeFileId ? ' active' : '') +
+          (tab.modified ? ' modified' : '');
+        el.dataset.fileId = fileId;
+        el.title = tab.name;
+        el.draggable = true;
+        el.innerHTML = `<span class="tab-name">${escHtml(tab.name)}</span><span class="tab-close">&times;</span>`;
+
+        el.addEventListener('click', e => {
+          if (e.target.classList.contains('tab-close')) return;
+          activateFile(fileId);
+        });
+        el.querySelector('.tab-close').addEventListener('click', e => {
+          e.stopPropagation();
+          closeFileTab(fileId);
+        });
+        el.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          showTabCtxMenu(e.clientX, e.clientY, fileId);
+        });
+        el.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('text/plain', String(fileId));
+          e.dataTransfer.effectAllowed = 'move';
+        });
+      }
+      frag.appendChild(el);
+    });
+
+    // 清除不在列表中的旧元素
+    Object.keys(existingMap).forEach(fid => existingMap[fid].remove());
+
+    tabsEl.innerHTML = '';
+    tabsEl.appendChild(frag);
+  });
+
+  // 更新提示文字
+  panes.forEach(pane => {
+    const hint = pane.editorEl.querySelector('.pane-hint');
+    if (hint) hint.style.display = pane.tabs.length === 0 ? 'flex' : 'none';
+  });
+}
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// ===================== 右键菜单 =====================
+function showTabCtxMenu(x, y, fileId) {
+  const menu = document.getElementById('ctxMenu');
+  const tab = fileTabs.find(t => t.id === fileId);
+  if (!tab) return;
+
+  const paneNames = panes.map((p, i) => `<div data-action="toPane" data-pane="${p.id}">移到窗格 ${i + 1}</div>`).join('');
+  menu.innerHTML = `
+    <div data-action="close">关闭「${escHtml(tab.name)}」</div>
+    <div data-action="save">保存</div>
+    <div data-action="saveAs">另存为…</div>
+    ${paneNames}
+    <div data-action="newPane">移到新窗格</div>
+  `;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(x, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 180) + 'px';
+
+  menu.querySelectorAll('div[data-action]').forEach(div => {
+    div.onclick = () => {
+      hideCtxMenu();
+      const a = div.dataset.action;
+      if (a === 'close') closeFileTab(fileId);
+      if (a === 'save') saveTab(tab);
+      if (a === 'saveAs') cmdSaveAs();
+      if (a === 'toPane') {
+        const p = getPaneById(parseInt(div.dataset.pane));
+        if (p) switchFileToPane(fileId, p);
+      }
+      if (a === 'newPane') {
+        switchFileToPane(fileId, createPane());
+      }
+    };
+  });
+
+  setTimeout(() => document.addEventListener('click', hideCtxMenu, { once: true }), 0);
+}
+
+function hideCtxMenu() { document.getElementById('ctxMenu').style.display = 'none'; }
+
+// ===================== I/O =====================
+async function cmdOpen() {
+  try {
+    const handles = await window.showOpenFilePicker({
+      types: [{ description: '文本', accept: { 'text/plain': ['.txt', '.text'] } }],
+      multiple: true,
+      startIn: 'desktop',
+    });
+
+    if (handles.length === 0) return;
+
+    let pane = activeFileId ? getPaneById(getActiveFile()?.paneId) : null;
+    if (!pane) pane = panes[0];
+
+    for (const handle of handles) {
+      const file = await handle.getFile();
+      const text = await file.text();
+      const tab = createFileTab(file.name, handle, pane.id);
+      addTabToPane(tab, pane);
+      tab.textarea.value = text;
+      tab.modified = false;
+    }
+    refreshAll();
+    // 确保最后一个文件可见
+    if (pane.activeFileId) {
+      const lastTab = fileTabs.find(t => t.id === pane.activeFileId);
+      if (lastTab && lastTab.textarea) lastTab.textarea.classList.add('active');
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('打开失败：' + e.message);
+  }
+}
+
+function cmdNew() {
+  let pane = activeFileId ? getPaneById(getActiveFile()?.paneId) : null;
+  if (!pane) pane = panes[0];
+  const tab = createFileTab('未命名.txt', null, pane.id);
+  addTabToPane(tab, pane);
+  refreshAll();
+}
+
+async function saveTab(tab) {
+  if (!tab || !tab.textarea) return;
+  const text = tab.textarea.value;
+  const data = new TextEncoder().encode(text);
+  try {
+    if (tab.handle) {
+      const writable = await tab.handle.createWritable();
+      await writable.write(data);
+      await writable.close();
+    } else {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: tab.name,
+        types: [{ description: '文本', accept: { 'text/plain': ['.txt'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(data);
+      await writable.close();
+      tab.handle = handle;
+      tab.name = handle.name || tab.name;
+    }
+    tab.modified = false;
+    refreshAll();
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('保存失败：' + e.message);
+  }
+}
+
+function cmdSave() {
+  const tab = getActiveFile();
+  if (tab) saveTab(tab);
+}
+
+async function cmdSaveAs() {
+  const tab = getActiveFile();
+  if (!tab || !tab.textarea) return;
+  const text = tab.textarea.value;
+  const data = new TextEncoder().encode(text);
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: tab.name,
+      types: [{ description: '文本', accept: { 'text/plain': ['.txt'] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(data);
+    await writable.close();
+    tab.handle = handle;
+    tab.name = handle.name || tab.name;
+    tab.modified = false;
+    refreshAll();
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('另存失败：' + e.message);
+  }
+}
+
+// ===================== 搜索 =====================
+let searchState = { query: '', caseSensitive: false, matches: [], idx: -1 };
+
+function toggleSearch(show) {
+  const bar = document.getElementById('searchBar');
+  const input = document.getElementById('searchInput');
+  if (show) {
+    bar.classList.add('visible');
+    input.focus();
+    input.select();
+    if (input.value) doSearch();
+  } else {
+    bar.classList.remove('visible');
+    // 清除高亮
+    const ta = document.querySelector('.pane-editor textarea.active');
+    if (ta) ta.focus();
+  }
+}
+
+function doSearch() {
+  const ta = document.querySelector('.pane-editor textarea.active');
+  const query = document.getElementById('searchInput').value;
+  const caseBtn = document.getElementById('searchCaseBtn');
+  searchState.query = query;
+  searchState.matches = [];
+  searchState.idx = -1;
+
+  if (!ta || !query) {
+    document.getElementById('searchCount').textContent = '';
+    return;
+  }
+
+  const text = ta.value;
+  const flags = searchState.caseSensitive ? 'g' : 'gi';
+  const re = new RegExp(escRegex(query), flags);
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    searchState.matches.push(m.index);
+  }
+
+  document.getElementById('searchCount').textContent = searchState.matches.length
+    ? `0 / ${searchState.matches.length}`
+    : '无匹配';
+
+  if (searchState.matches.length > 0) {
+    searchState.idx = 0;
+    selectMatch(ta, 0);
+  }
+}
+
+function selectMatch(ta, idx) {
+  const pos = searchState.matches[idx];
+  const len = searchState.query.length;
+  ta.focus();
+  ta.setSelectionRange(pos, pos + len);
+  // 滚动到可见区域（粗略估算行高）
+  const before = ta.value.substring(0, pos);
+  const lineNum = before.split('\n').length;
+  const lineH = fontSize * 1.9;
+  const padTop = 28; // textarea padding
+  const targetY = lineNum * lineH - ta.clientHeight / 2 + padTop;
+  ta.scrollTop = Math.max(0, targetY);
+
+  document.getElementById('searchCount').textContent =
+    `${idx + 1} / ${searchState.matches.length}`;
+}
+
+function searchNext() {
+  const ta = document.querySelector('.pane-editor textarea.active');
+  if (!ta || searchState.matches.length === 0) return;
+  searchState.idx = (searchState.idx + 1) % searchState.matches.length;
+  selectMatch(ta, searchState.idx);
+}
+
+function searchPrev() {
+  const ta = document.querySelector('.pane-editor textarea.active');
+  if (!ta || searchState.matches.length === 0) return;
+  searchState.idx = (searchState.idx - 1 + searchState.matches.length) % searchState.matches.length;
+  selectMatch(ta, searchState.idx);
+}
+
+function escRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 搜索栏事件
+document.getElementById('searchInput').addEventListener('input', doSearch);
+document.getElementById('searchInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? searchPrev() : searchNext(); }
+  if (e.key === 'Escape') { e.preventDefault(); toggleSearch(false); }
+});
+document.getElementById('searchNextBtn').addEventListener('click', searchNext);
+document.getElementById('searchPrevBtn').addEventListener('click', searchPrev);
+document.getElementById('searchCaseBtn').addEventListener('click', function () {
+  searchState.caseSensitive = !searchState.caseSensitive;
+  this.classList.toggle('active', searchState.caseSensitive);
+  if (searchState.query) doSearch();
+});
+
+// ===================== 跳转到行 =====================
+function cmdGoToLine() {
+  const ta = document.querySelector('.pane-editor textarea.active');
+  if (!ta) return;
+  const total = ta.value.split('\n').length;
+  const input = prompt(`跳转到行 (1–${total})：`);
+  if (input === null) return;
+  const n = parseInt(input, 10);
+  if (isNaN(n) || n < 1 || n > total) { alert('无效行号'); return; }
+
+  const lines = ta.value.split('\n');
+  let pos = 0;
+  for (let i = 0; i < n - 1; i++) pos += lines[i].length + 1;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  const lineH = fontSize * 1.9;
+  ta.scrollTop = Math.max(0, n * lineH - ta.clientHeight / 2);
+}
+
+// ===================== 拖放外部文件 =====================
+function handleFileDrop(e, pane) {
+  const items = [...(e.dataTransfer.items || [])].filter(i => i.kind === 'file');
+  if (items.length === 0) return;
+  items.forEach(async item => {
+    const file = item.getAsFile();
+    if (!file) return;
+    const text = await file.text();
+    const tab = createFileTab(file.name, null, pane.id);
+    addTabToPane(tab, pane);
+    tab.textarea.value = text;
+    refreshAll();
+  });
+}
+
+// 全局拖放（兜底：没拖到具体 pane 上时）
+document.addEventListener('dragover', e => {
+  if ([...e.dataTransfer.items].some(i => i.kind === 'file')) e.preventDefault();
+});
+document.addEventListener('drop', e => {
+  const items = [...(e.dataTransfer.items || [])].filter(i => i.kind === 'file');
+  if (items.length === 0) return;
+  e.preventDefault();
+  let pane = activeFileId ? getPaneById(getActiveFile()?.paneId) : null;
+  if (!pane) pane = panes[0];
+  handleFileDrop(e, pane);
+});
+
+// ===================== 快捷键 =====================
+document.addEventListener('keydown', e => {
+  // 搜索栏打开时，Esc 关闭搜索
+  if (e.key === 'Escape') {
+    const bar = document.getElementById('searchBar');
+    if (bar.classList.contains('visible')) {
+      e.preventDefault();
+      toggleSearch(false);
+      return;
+    }
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') { e.preventDefault(); cmdSaveAs(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); cmdSave(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'o') { e.preventDefault(); cmdOpen(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 't') { e.preventDefault(); cmdNew(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+    e.preventDefault();
+    const tab = getActiveFile();
+    if (tab) closeFileTab(tab.id);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); toggleSearch(true); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'g') { e.preventDefault(); cmdGoToLine(); return; }
+  // Enter / Shift+Enter in search input handled by input's own keydown
+});
+
+// 关闭提醒
+window.addEventListener('beforeunload', e => {
+  if (fileTabs.some(t => t.modified)) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ===================== 初始 =====================
+applyTheme('dark');
+refreshAll();
+</script>
+</body>
+</html>
